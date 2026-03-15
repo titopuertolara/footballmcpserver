@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -7,6 +8,13 @@ from fastmcp.server.lifespan import lifespan
 
 from app.database.connection import create_async_db_engine, create_async_session_factory, create_tables
 from app.services import game_service, user_service
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("footballbot")
 
 _ORGANIZER_ARGS = ["platform", "organizer_user_id", "organizer_username", "organizer_name"]
 _PLAYER_ARGS = ["platform", "player_user_id", "player_username", "player_name"]
@@ -54,6 +62,8 @@ async def create_game(
         players_needed: Total number of players needed
         positions_needed: Comma-separated positions needed
     """
+    logger.info("create_game called by %s (%s) on %s | location=%s date=%s time=%s type=%s grass=%s needed=%d",
+                organizer_username, organizer_user_id, platform, location, date, time, game_type, grass_type, players_needed)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         organizer = await user_service.get_or_create_user(
@@ -70,6 +80,7 @@ async def create_game(
             players_needed=players_needed,
             positions_needed=positions_needed or None,
         )
+        logger.info("create_game result: game_id=%s status=%s", game.id, game.status)
         return json.dumps(
             {
                 "success": True,
@@ -100,6 +111,7 @@ async def find_games(
         date: Filter by date (YYYY-MM-DD)
         position: Filter by needed position
     """
+    logger.info("find_games called | location=%s date=%s position=%s", location, date, position)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         games = await game_service.find_games(
@@ -108,6 +120,7 @@ async def find_games(
             date=date or None,
             position=position or None,
         )
+        logger.info("find_games result: %d games found", len(games))
         results = []
         for g in games:
             current_players = len(g.players)
@@ -124,6 +137,7 @@ async def find_games(
                     "spots_remaining": g.players_needed - current_players,
                     "positions_needed": g.positions_needed,
                     "organizer": g.organizer.name or g.organizer.username,
+                    "organizer_display": f"{g.organizer.name or g.organizer.username} (<@{g.organizer.platform_user_id}> · @{g.organizer.username})" if g.organizer.platform == "discord" else f"{g.organizer.name or g.organizer.username} (@{g.organizer.username})",
                     "organizer_platform_user_id": g.organizer.platform_user_id,
                     "organizer_platform": g.organizer.platform,
                     "status": g.status,
@@ -149,6 +163,8 @@ async def add_player_to_game(
         game_id: ID of the game
         position: Position for the player
     """
+    logger.info("add_player_to_game called | game_id=%d organizer=%s player=%s (%s) position=%s",
+                game_id, organizer_user_id, player_username, player_user_id, position)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         organizer = await user_service.get_or_create_user(
@@ -164,6 +180,7 @@ async def add_player_to_game(
             player_id=player.id,
             position=position or None,
         )
+        logger.info("add_player_to_game result: %s", result)
         return json.dumps(result)
 
 
@@ -174,6 +191,7 @@ async def get_game_details(ctx: Context, game_id: int) -> str:
     Args:
         game_id: ID of the game
     """
+    logger.info("get_game_details called | game_id=%d", game_id)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         game = await game_service.get_game_details(session, game_id)
@@ -232,6 +250,8 @@ async def subscribe_player(
         location: Area or neighborhood where they prefer to play
         availability: When available (e.g. "weekends", "weekday evenings")
     """
+    logger.info("subscribe_player called | %s (%s) on %s | position=%s skill=%s location=%s availability=%s",
+                player_username, player_user_id, platform, preferred_position, skill_level, location, availability)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         player = await user_service.subscribe_player(
@@ -245,6 +265,7 @@ async def subscribe_player(
             location=location or None,
             availability=availability or None,
         )
+        logger.info("subscribe_player result: player_id=%s name=%s", player.id, player.name)
         return json.dumps(
             {
                 "success": True,
@@ -277,6 +298,8 @@ async def update_player_profile(
         location: Area or neighborhood where they prefer to play
         availability: When available (e.g. "weekends", "weekday evenings")
     """
+    logger.info("update_player_profile called | %s on %s | position=%s skill=%s location=%s availability=%s",
+                player_user_id, platform, preferred_position, skill_level, location, availability)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         player = await user_service.update_player_profile(
@@ -318,6 +341,8 @@ async def find_players(
         location: Filter by location/neighborhood (partial match)
         availability: Filter by availability (partial match)
     """
+    logger.info("find_players called | position=%s skill=%s location=%s availability=%s",
+                position, skill_level, location, availability)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         players = await user_service.find_players(
@@ -327,21 +352,28 @@ async def find_players(
             location=location or None,
             availability=availability or None,
         )
+        logger.info("find_players result: %d players found", len(players))
+        for p in players:
+            logger.info("  player: %s (%s) | platform_user_id=%s position=%s skill=%s location=%s",
+                        p.name, p.username, p.platform_user_id, p.preferred_position, p.skill_level, p.location)
         results = []
         for p in players:
+            mention = f"<@{p.platform_user_id}>" if p.platform == "discord" else f"@{p.username}"
             results.append(
                 {
                     "name": p.name or p.username,
-                    "username": p.username,
-                    "platform": p.platform,
-                    "platform_user_id": p.platform_user_id,
+                    "mention": mention,
                     "preferred_position": p.preferred_position,
                     "skill_level": p.skill_level,
                     "location": p.location,
                     "availability": p.availability,
                 }
             )
-        return json.dumps({"players": results, "count": len(results)})
+        return json.dumps({
+            "instructions": "IMPORTANT: Always use the 'mention' field when displaying player names so they are clickable in Discord.",
+            "players": results,
+            "count": len(results),
+        })
 
 
 @mcp.tool(exclude_args=_PLAYER_ARGS)
@@ -362,6 +394,8 @@ async def request_to_join_game(
         position: Preferred position for this game
         message: Optional message to the organizer
     """
+    logger.info("request_to_join_game called | game_id=%d player=%s (%s) on %s position=%s",
+                game_id, player_username, player_user_id, platform, position)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         player = await user_service.get_or_create_user(
@@ -374,6 +408,7 @@ async def request_to_join_game(
             position=position or None,
             message=message or None,
         )
+        logger.info("request_to_join_game result: %s", result)
         return json.dumps(result)
 
 
@@ -389,6 +424,8 @@ async def accept_join_request(
     Args:
         request_id: ID of the join request to accept
     """
+    logger.info("accept_join_request called | request_id=%d organizer=%s on %s",
+                request_id, organizer_user_id, platform)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         organizer = await user_service.get_or_create_user(
@@ -399,6 +436,7 @@ async def accept_join_request(
             request_id=request_id,
             organizer_user_id=organizer.id,
         )
+        logger.info("accept_join_request result: %s", result)
         return json.dumps(result)
 
 
@@ -414,6 +452,8 @@ async def reject_join_request(
     Args:
         request_id: ID of the join request to reject
     """
+    logger.info("reject_join_request called | request_id=%d organizer=%s on %s",
+                request_id, organizer_user_id, platform)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         organizer = await user_service.get_or_create_user(
@@ -424,6 +464,7 @@ async def reject_join_request(
             request_id=request_id,
             organizer_user_id=organizer.id,
         )
+        logger.info("reject_join_request result: %s", result)
         return json.dumps(result)
 
 
@@ -439,6 +480,8 @@ async def get_pending_requests(
     Args:
         game_id: ID of the game
     """
+    logger.info("get_pending_requests called | game_id=%d organizer=%s on %s",
+                game_id, organizer_user_id, platform)
     session_factory = ctx.lifespan_context["session_factory"]
     async with session_factory() as session:
         organizer = await user_service.get_or_create_user(
@@ -449,6 +492,7 @@ async def get_pending_requests(
             game_id=game_id,
             organizer_user_id=organizer.id,
         )
+        logger.info("get_pending_requests result: %s", result)
         return json.dumps(result)
 
 
