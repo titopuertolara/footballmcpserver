@@ -171,21 +171,33 @@ async def create_join_request(
     if existing_player.scalars().first():
         return {"success": False, "error": "You are already in this game"}
 
-    # Check if already has a pending request
+    # Check if already has an existing request
     existing_request = await session.execute(
         select(JoinRequest).filter(
             JoinRequest.game_id == game_id,
             JoinRequest.player_id == player_id,
-            JoinRequest.status == "pending",
         )
     )
-    if existing_request.scalars().first():
-        return {"success": False, "error": "You already have a pending request for this game"}
+    existing = existing_request.scalars().first()
+    if existing:
+        if existing.status == "pending":
+            return {"success": False, "error": "You already have a pending request for this game"}
+        if existing.status == "rejected":
+            return {"success": False, "error": "Your request to join this game was rejected by the organizer"}
+        if existing.status == "accepted":
+            return {"success": False, "error": "You are already accepted into this game"}
 
     jr = JoinRequest(game_id=game_id, player_id=player_id, position=position, message=message)
     session.add(jr)
     await session.commit()
     await session.refresh(jr)
+
+    # Load the player to include their info in the response
+    from app.database.models import User
+    player_result = await session.execute(
+        select(User).filter(User.id == player_id)
+    )
+    player = player_result.scalars().first()
 
     return {
         "success": True,
@@ -197,6 +209,9 @@ async def create_join_request(
         "organizer_platform": game.organizer.platform,
         "organizer_platform_user_id": game.organizer.platform_user_id,
         "organizer_name": game.organizer.name or game.organizer.username,
+        "player_platform_user_id": player.platform_user_id if player else "",
+        "player_name": player.name or player.username if player else "",
+        "position": jr.position,
     }
 
 
@@ -280,6 +295,7 @@ async def reject_join_request(
     return {
         "success": True,
         "request_id": jr.id,
+        "game_id": jr.game_id,
         "player_name": jr.player.name or jr.player.username,
         "player_platform_user_id": jr.player.platform_user_id,
     }
