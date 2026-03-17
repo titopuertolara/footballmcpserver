@@ -16,7 +16,7 @@ def get_database_url() -> str:
     name = os.environ.get("FOOTBALLBOT_DB_NAME", "footballbot")
     user = os.environ.get("FOOTBALLBOT_DB_USER", "postgres")
     password = os.environ.get("FOOTBALLBOT_DB_PASSWORD", "postgres")
-    return f"postgresql://{user}:{password}@{host}:{port}/{name}"
+    return f"postgresql://{user}:{password}@{host}:{port}/{name}?sslmode=require"
 
 
 def get_async_database_url() -> str:
@@ -25,7 +25,7 @@ def get_async_database_url() -> str:
     name = os.environ.get("FOOTBALLBOT_DB_NAME", "footballbot")
     user = os.environ.get("FOOTBALLBOT_DB_USER", "postgres")
     password = os.environ.get("FOOTBALLBOT_DB_PASSWORD", "postgres")
-    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}"
+    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}?ssl=require"
 
 
 def create_tables():
